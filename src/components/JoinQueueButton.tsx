@@ -20,12 +20,20 @@ export function JoinQueueButton({ eventId }: { eventId: string }) {
         body: JSON.stringify({ eventId }),
       });
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const text = await res.text();
+        console.error('Non-JSON response from /api/queue/join:', res.status, text.slice(0, 200));
+        throw new Error(`Server error (${res.status}). Please try again.`);
+      }
+
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || 'Failed to join queue');
       }
 
-      const { sessionId, queueToken } = await res.json();
+      const { sessionId, queueToken } = data;
 
       // Store session info in cookie for SSE auth
       document.cookie = `qs_session=${sessionId}; path=/; max-age=3600; samesite=strict`;
