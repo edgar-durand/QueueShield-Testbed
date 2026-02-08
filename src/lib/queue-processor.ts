@@ -11,6 +11,13 @@ const TOKEN_EXPIRY_CLEANUP_MS = 10_000; // every 10s (was 60s)
 const SESSION_GC_MS = 30_000; // every 30s (was 5 min)
 const POSITION_REFRESH_MS = 5_000; // refresh visible positions every 5s
 const STATS_LOG_MS = 15_000; // log stats every 15s
+const REFILL_CHECK_MS = 5_000; // check queue/ticket refill every 5s
+const DATA_CLEANUP_MS = 60_000; // purge old data every 60s
+
+const PHANTOM_QUEUE_SIZE = 10_000;
+const TICKET_REFILL_AMOUNT = 100;
+const QUEUE_KEY = 'queueshield:queue';
+const QUEUE_POSITIONS_KEY = 'queueshield:positions';
 
 export class QueueProcessor {
   static start(): void {
@@ -76,6 +83,25 @@ export class QueueProcessor {
         console.error('[QueueProcessor] Ban cleanup error:', err);
       }
     }, 120_000));
+
+    // Auto-refill: phantom users + ticket reset
+    handles.push(setInterval(async () => {
+      try {
+        await this.autoRefillQueue();
+        await this.autoRefillTickets();
+      } catch (err) {
+        console.error('[QueueProcessor] Refill error:', err);
+      }
+    }, REFILL_CHECK_MS));
+
+    // Aggressive old data cleanup
+    handles.push(setInterval(async () => {
+      try {
+        await this.purgeOldData();
+      } catch (err) {
+        console.error('[QueueProcessor] Purge error:', err);
+      }
+    }, DATA_CLEANUP_MS));
 
     // Periodic stats log
     handles.push(setInterval(async () => {
@@ -220,6 +246,93 @@ export class QueueProcessor {
     });
     if (staleActive.count > 0) {
       console.log(`[QueueProcessor] GC'd ${staleActive.count} stale ACTIVE sessions`);
+    }
+  }
+
+  /**
+   * When queue is empty, seed it with 10K phantom entries.
+   * Phantoms have no DB record — processQueue removes them naturally
+   * at batchSize/interval, simulating a busy queue.
+   */
+  private static async autoRefillQueue(): Promise<void> {
+    const queueLen = await redis.zcard(QUEUE_KEY);
+    if (queueLen > 0) return;
+
+    console.log(`[QueueProcessor] Queue empty — seeding ${PHANTOM_QUEUE_SIZE} phantom users`);
+    const baseTime = Date.now();
+    const BATCH = 500;
+
+    for (let i = 0; i < PHANTOM_QUEUE_SIZE; i += BATCH) {
+      const pipe = redis.pipeline();
+      const end = Math.min(i + BATCH, PHANTOM_QUEUE_SIZE);
+      for (let j = i; j < end; j++) {
+        const phantomId = `phantom-${baseTime}-${j}`;
+        pipe.zadd(QUEUE_KEY, baseTime + j, phantomId);
+      }
+      await pipe.exec();
+    }
+
+    console.log(`[QueueProcessor] Seeded ${PHANTOM_QUEUE_SIZE} phantom users in queue`);
+  }
+
+  /**
+   * When all tickets are sold, reset the counter so the demo keeps running.
+   */
+  private static async autoRefillTickets(): Promise<void> {
+    const event = await prisma.eventConfig.findFirst({ where: { isActive: true } });
+    if (!event) return;
+
+    if (event.soldTickets >= event.totalTickets) {
+      await prisma.eventConfig.update({
+        where: { id: event.id },
+        data: {
+          soldTickets: 0,
+          totalTickets: TICKET_REFILL_AMOUNT,
+        },
+      });
+      console.log(`[QueueProcessor] Tickets sold out — refilled to ${TICKET_REFILL_AMOUNT}`);
+    }
+  }
+
+  /**
+   * Purge old session data to keep the DB lean.
+   * Deletes EXPIRED, COMPLETED, and BANNED sessions older than 5 minutes
+   * along with their related records.
+   */
+  private static async purgeOldData(): Promise<void> {
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+
+    // Delete old telemetry events
+    const telemetry = await prisma.telemetryEvent.deleteMany({
+      where: { createdAt: { lt: cutoff } },
+    });
+
+    // Delete old bot score entries
+    const scores = await prisma.botScoreEntry.deleteMany({
+      where: { createdAt: { lt: cutoff } },
+    });
+
+    // Delete old captcha attempts
+    const captcha = await prisma.captchaAttempt.deleteMany({
+      where: { attemptedAt: { lt: cutoff } },
+    });
+
+    // Delete old sessions (EXPIRED, COMPLETED, BANNED)
+    const sessions = await prisma.session.deleteMany({
+      where: {
+        status: { in: ['EXPIRED', 'COMPLETED', 'BANNED'] },
+        updatedAt: { lt: cutoff },
+      },
+    });
+
+    // Delete expired bans
+    const bans = await prisma.banList.deleteMany({
+      where: { expiresAt: { lt: new Date() } },
+    });
+
+    const total = telemetry.count + scores.count + captcha.count + sessions.count + bans.count;
+    if (total > 0) {
+      console.log(`[QueueProcessor] Purged old data: ${sessions.count} sessions, ${telemetry.count} telemetry, ${scores.count} scores, ${captcha.count} captcha, ${bans.count} bans`);
     }
   }
 
