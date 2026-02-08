@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SessionStatus {
+  ACTIVE
+  IN_QUEUE
+  CHALLENGED
+  ADMITTED
+  PURCHASING
+  COMPLETED
+  BANNED
+  EXPIRED
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model Session {
+  id            String        @id @default(uuid())
+  fingerprint   String?
+  ipAddress     String
+  userAgent     String
+  status        SessionStatus @default(ACTIVE)
+  riskScore     Float         @default(0)
+  riskLevel     RiskLevel     @default(LOW)
+  isBanned      Boolean       @default(false)
+  banReason     String?
+
+  // Queue data
+  queuePosition Int?
+  queueJoinedAt DateTime?
+  queueToken    String?       @unique
+
+  // Access token for purchase page
+  accessToken   String?       @unique
+  accessTokenExpiresAt DateTime?
+
+  // Fingerprint data (JSON blobs)
+  passiveFingerprint  Json?
+  activeFingerprint   Json?
+  behaviorData        Json?
+
+  // Timestamps
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  lastSeenAt    DateTime      @default(now())
+
+  // Relations
+  botScores     BotScore[]
+  captchaAttempts CaptchaAttempt[]
+  telemetryEvents TelemetryEvent[]
+
+  @@index([ipAddress])
+  @@index([status])
+  @@index([queueToken])
+  @@index([accessToken])
+  @@index([riskScore])
+}
+
+model BotScore {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  layer       String   // passive, active, behavior, captcha
+  category    String   // e.g. "tls_fingerprint", "canvas_hash", "mouse_entropy"
+  score       Float    // 0-100 risk contribution
+  details     Json?    // raw detection data
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([layer])
+}
+
+model CaptchaAttempt {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  provider    String   // hcaptcha, custom
+  challengeType String // image, drag, click
+  passed      Boolean
+  responseTime Int?    // ms
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId])
+}
+
+model TelemetryEvent {
+  id          String   @id @default(uuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  eventType   String   // mouse_move, mouse_click, key_press, scroll
+  data        Json     // raw telemetry payload
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([eventType])
+}
+
+model BanList {
+  id          String   @id @default(uuid())
+  ipAddress   String
+  reason      String
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@unique([ipAddress])
+  @@index([expiresAt])
+}
+
+model DetectorConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+model EventConfig {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  venue       String?
+  eventDate   DateTime
+  totalTickets Int     @default(100)
+  soldTickets  Int     @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
