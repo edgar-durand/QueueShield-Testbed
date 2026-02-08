@@ -13,7 +13,7 @@ function optional(key: string, fallback: string): string {
 export const env = {
   // Database
   DATABASE_URL: required('DATABASE_URL'),
-  REDIS_URL: optional('REDIS_URL', 'redis://localhost:6380'),
+  REDIS_URL: optional('REDIS_URL', ''),
 
   // Security
   SESSION_SECRET: optional('SESSION_SECRET', 'change-me-in-production-please'),
