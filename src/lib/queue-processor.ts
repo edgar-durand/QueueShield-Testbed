@@ -300,6 +300,12 @@ export class QueueProcessor {
    * along with their related records.
    */
   private static async purgeOldData(): Promise<void> {
+    // Never purge while there are active sessions in queue
+    const activeInQueue = await prisma.session.count({
+      where: { status: { in: ['IN_QUEUE', 'ADMITTED', 'PURCHASING', 'CHALLENGED'] } },
+    });
+    if (activeInQueue > 0) return;
+
     const cutoff = new Date(Date.now() - 10 * 60 * 1000);
 
     // Delete old telemetry events
