@@ -9,7 +9,7 @@ async function getEvent() {
   if (!event) {
     event = await prisma.eventConfig.create({
       data: {
-        name: 'QueueShield Security Challenge 2025',
+        name: 'QueueShield Security Challenge 2026',
         description: 'The ultimate bot detection stress test. Can your automation survive our multi-layered defense system?',
         venue: 'Digital Arena — Cyberspace',
         eventDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),

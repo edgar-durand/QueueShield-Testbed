@@ -11,7 +11,7 @@ async function main() {
     update: {},
     create: {
       id: 'default-event',
-      name: 'QueueShield Security Challenge 2025',
+      name: 'QueueShield Security Challenge 2026',
       description: 'The ultimate bot detection stress test. Can your automation survive our multi-layered defense system?',
       venue: 'Digital Arena — Cyberspace',
       eventDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
