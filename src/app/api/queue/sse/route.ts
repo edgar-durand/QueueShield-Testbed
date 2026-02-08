@@ -17,6 +17,12 @@ export async function GET(req: NextRequest) {
     return new Response('Missing sessionId', { status: 400 });
   }
 
+  // Session ownership: validate qs_session cookie matches the requested sessionId
+  const ownerCookie = req.cookies.get('qs_session')?.value;
+  if (!ownerCookie || ownerCookie !== sessionId) {
+    return new Response('Unauthorized', { status: 403 });
+  }
+
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     || req.headers.get('x-real-ip') || '127.0.0.1';
 

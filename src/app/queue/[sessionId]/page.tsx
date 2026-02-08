@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { cookies } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import { Shield } from 'lucide-react';
 import { QueueStatus } from '@/components/QueueStatus';
@@ -12,6 +13,14 @@ interface Props {
 }
 
 export default async function QueueWaitingRoom({ params }: Props) {
+  // Session ownership validation: only the browser that joined can view
+  const cookieStore = cookies();
+  const ownerCookie = cookieStore.get('qs_session')?.value;
+
+  if (!ownerCookie || ownerCookie !== params.sessionId) {
+    redirect('/');
+  }
+
   const session = await prisma.session.findUnique({
     where: { id: params.sessionId },
   });
@@ -80,16 +89,6 @@ export default async function QueueWaitingRoom({ params }: Props) {
             )}
           </p>
         </div>
-
-        {/* VULNERABILITY: Full credentials embedded in DOM as hidden data attributes.
-            An attacker can extract these from page source / DevTools to manipulate the queue. */}
-        <div
-          id="queue-data"
-          data-session-id={params.sessionId}
-          data-queue-token={session.queueToken || ''}
-          className="hidden"
-          aria-hidden="true"
-        />
 
         {/* Invisible security components */}
         <FingerprintCollector sessionId={params.sessionId} />
