@@ -1,6 +1,7 @@
 import { redis } from './redis';
 import { prisma } from './db';
 import { v4 as uuidv4 } from 'uuid';
+import { signToken, verifyTokenSignature } from './crypto';
 
 const QUEUE_KEY = 'queueshield:queue';
 const QUEUE_POSITIONS_KEY = 'queueshield:positions';
@@ -25,8 +26,9 @@ export class QueueManager {
   private static processIntervalMs = parseInt(process.env.QUEUE_PROCESS_INTERVAL_MS || '3000', 10);
   private static batchSize = parseInt(process.env.QUEUE_BATCH_SIZE || '5', 10);
 
-  static async joinQueue(sessionId: string): Promise<{ queueToken: string; position: number }> {
+  static async joinQueue(sessionId: string): Promise<{ queueToken: string; tokenSignature: string; position: number }> {
     const queueToken = uuidv4();
+    const tokenSignature = signToken(queueToken);
     const now = Date.now();
 
     // Add to Redis sorted set (score = timestamp for FIFO ordering)
@@ -52,7 +54,7 @@ export class QueueManager {
       },
     });
 
-    return { queueToken, position };
+    return { queueToken, tokenSignature, position };
   }
 
   static async getQueueStatus(sessionId: string): Promise<QueueStatus> {

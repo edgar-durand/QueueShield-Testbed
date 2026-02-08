@@ -8,7 +8,7 @@ interface Props {
   sessionId: string;
 }
 
-type ChallengeType = 'hcaptcha' | 'custom_drag' | 'custom_click';
+type ChallengeType = 'recaptcha' | 'custom_drag' | 'custom_click';
 
 export function CaptchaChallenge({ sessionId }: Props) {
   const [status, setStatus] = useState<'pending' | 'verifying' | 'passed' | 'failed'>('pending');

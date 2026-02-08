@@ -140,6 +140,50 @@ export class SessionManager {
     await this.updateRiskScore(sessionId, aggregateScore);
   }
 
+  /**
+   * Find an active (IN_QUEUE or ACTIVE) session from the same IP.
+   * Used for device deduplication.
+   */
+  static async findActiveSessionByIp(ipAddress: string): Promise<string | null> {
+    const existing = await prisma.session.findFirst({
+      where: {
+        ipAddress,
+        status: { in: ['ACTIVE', 'IN_QUEUE'] },
+        isBanned: false,
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return existing?.id ?? null;
+  }
+
+  /**
+   * Find an active session by device fingerprint hash.
+   * Used for device deduplication across IPs.
+   */
+  static async findActiveSessionByFingerprint(fingerprint: string): Promise<string | null> {
+    const existing = await prisma.session.findFirst({
+      where: {
+        fingerprint,
+        status: { in: ['ACTIVE', 'IN_QUEUE'] },
+        isBanned: false,
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return existing?.id ?? null;
+  }
+
+  /**
+   * Update device fingerprint hash on a session.
+   */
+  static async setDeviceFingerprint(sessionId: string, fingerprint: string): Promise<void> {
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { fingerprint },
+    });
+  }
+
   static getClientIp(): string {
     const hdrs = headers();
     return (

@@ -30,9 +30,14 @@ export const env = {
   RISK_THRESHOLD_MEDIUM: parseInt(optional('RISK_THRESHOLD_MEDIUM', '60'), 10),
   RISK_THRESHOLD_HIGH: parseInt(optional('RISK_THRESHOLD_HIGH', '85'), 10),
 
-  // CAPTCHA
-  HCAPTCHA_SITE_KEY: optional('HCAPTCHA_SITE_KEY', '10000000-ffff-ffff-ffff-000000000001'),
-  HCAPTCHA_SECRET_KEY: optional('HCAPTCHA_SECRET_KEY', ''),
+  // reCAPTCHA v3 (free — https://www.google.com/recaptcha/admin)
+  RECAPTCHA_SITE_KEY: optional('RECAPTCHA_SITE_KEY', ''),
+  RECAPTCHA_SECRET_KEY: optional('RECAPTCHA_SECRET_KEY', ''),
+  RECAPTCHA_SCORE_THRESHOLD: parseFloat(optional('RECAPTCHA_SCORE_THRESHOLD', '0.5')),
+
+  // Proof of Work
+  POW_DIFFICULTY: parseInt(optional('POW_DIFFICULTY', '18'), 10),
+  POW_SECRET: optional('POW_SECRET', optional('SESSION_SECRET', 'change-me-in-production-please')),
 
   // Node
   NODE_ENV: optional('NODE_ENV', 'development'),

@@ -20,20 +20,12 @@ export async function POST(req: NextRequest) {
     let passed = false;
     let responseTimeMs = 0;
 
-    if (type === 'hcaptcha') {
-      // Verify with hCaptcha API
-      const secret = process.env.HCAPTCHA_SECRET_KEY;
-      if (!secret) {
-        return NextResponse.json({ error: 'CAPTCHA not configured' }, { status: 500 });
-      }
-
-      const verifyRes = await fetch('https://hcaptcha.com/siteverify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ secret, response }),
-      });
-      const verifyData = await verifyRes.json();
-      passed = verifyData.success === true;
+    if (type === 'recaptcha') {
+      // Verify with Google reCAPTCHA v3
+      const { verifyRecaptcha } = await import('@/lib/recaptcha');
+      const result = await verifyRecaptcha(response, 'captcha_challenge');
+      passed = result.success && result.score >= 0.5;
+      responseTimeMs = 0;
     } else if (type === 'custom_click' || type === 'custom_drag') {
       // Verify custom challenge
       try {
@@ -62,7 +54,7 @@ export async function POST(req: NextRequest) {
     await prisma.captchaAttempt.create({
       data: {
         sessionId,
-        provider: type === 'hcaptcha' ? 'hcaptcha' : 'custom',
+        provider: type === 'recaptcha' ? 'recaptcha' : 'custom',
         challengeType: type,
         passed,
         responseTime: responseTimeMs > 0 ? responseTimeMs : null,

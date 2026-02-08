@@ -117,6 +117,22 @@ async function collectFingerprint() {
   const colorDepth = screen.colorDepth;
   const touchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
+  // Compute device hash for deduplication (client-side)
+  const hashComponents = [
+    canvasHash, webglVendor, webglRenderer, screenResolution,
+    timezone, languages.join(','), String(hardwareConcurrency), String(colorDepth),
+  ].join('|');
+  let deviceHash = '';
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(hashComponents);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    deviceHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch {
+    deviceHash = '';
+  }
+
   return {
     canvasHash,
     webglVendor,
@@ -133,5 +149,6 @@ async function collectFingerprint() {
     webdriver,
     automationFlags,
     permissionInconsistency,
+    deviceHash,
   };
 }
