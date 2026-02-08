@@ -296,11 +296,11 @@ export class QueueProcessor {
 
   /**
    * Purge old session data to keep the DB lean.
-   * Deletes EXPIRED, COMPLETED, and BANNED sessions older than 5 minutes
+   * Deletes EXPIRED, COMPLETED, and BANNED sessions older than 10 minutes
    * along with their related records.
    */
   private static async purgeOldData(): Promise<void> {
-    const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+    const cutoff = new Date(Date.now() - 10 * 60 * 1000);
 
     // Delete old telemetry events
     const telemetry = await prisma.telemetryEvent.deleteMany({
