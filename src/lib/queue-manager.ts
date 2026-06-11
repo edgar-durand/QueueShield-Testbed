@@ -1,7 +1,7 @@
 import { redis } from './redis';
 import { prisma } from './db';
 import { v4 as uuidv4 } from 'uuid';
-import { signToken, verifyTokenSignature } from './crypto';
+import { signToken } from './crypto';
 
 const QUEUE_KEY = 'queueshield:queue';
 const QUEUE_POSITIONS_KEY = 'queueshield:positions';
@@ -122,14 +122,13 @@ export class QueueManager {
         const accessToken = uuidv4();
         const ttl = parseInt(process.env.ACCESS_TOKEN_TTL_SECONDS || '120', 10);
 
-        // Mark as admitted in Redis
+        // Mark as admitted in Redis.
+        // Note: expiry is enforced by QueueProcessor.cleanupExpiredTokens via the
+        // DB accessTokenExpiresAt field — individual hash fields can't carry a TTL.
         await redis.hset(QUEUE_ADMITTED_KEY, sessionId, JSON.stringify({
           accessToken,
           admittedAt: Date.now(),
         }));
-
-        // Set TTL on the admission
-        await redis.expire(`${QUEUE_ADMITTED_KEY}:${sessionId}`, ttl);
 
         // Remove from queue
         await redis.zrem(QUEUE_KEY, sessionId);

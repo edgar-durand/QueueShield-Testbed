@@ -1,4 +1,5 @@
 import { SessionManager } from './session-manager';
+import { prisma } from './db';
 
 interface HeaderAnalysis {
   score: number;
@@ -137,13 +138,15 @@ export class BotDetector {
    * Basic IP analysis — in production, integrate MaxMind/IPinfo.
    */
   static analyzeIp(ipAddress: string): number {
-    // Private/localhost — not suspicious for testing
+    // Private/localhost — not suspicious for testing.
+    // 172.16.0.0/12 spans 172.16.x – 172.31.x (not all of 172.x).
+    const is172Private = /^172\.(1[6-9]|2\d|3[01])\./.test(ipAddress);
     if (
       ipAddress === '127.0.0.1' ||
       ipAddress === '::1' ||
       ipAddress.startsWith('192.168.') ||
       ipAddress.startsWith('10.') ||
-      ipAddress.startsWith('172.')
+      is172Private
     ) {
       return 0;
     }
@@ -224,12 +227,10 @@ export class BotDetector {
     });
 
     // Store fingerprint data
-    await import('./db').then(({ prisma }) =>
-      prisma.session.update({
-        where: { id: sessionId },
-        data: { activeFingerprint: data as any },
-      }),
-    );
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { activeFingerprint: data as any },
+    });
 
     return score;
   }
