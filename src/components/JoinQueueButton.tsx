@@ -22,12 +22,11 @@ export function JoinQueueButton({ eventId }: { eventId: string }) {
   const [powProgress, setPowProgress] = useState(0);
   const router = useRouter();
 
-  // Step 1: JS challenge — proves browser can execute JavaScript
-  const solveJsChallenge = useCallback(async (): Promise<{ seed: string; answer: string }> => {
+  // Step 1: JS challenge — proves browser can execute JavaScript.
+  // The seed is issued by the server (single-use) so it can't be pre-computed.
+  const solveJsChallenge = useCallback(async (seed: string): Promise<{ seed: string; answer: string }> => {
     setPhase('js_challenge');
     // Compute SHA-256 in browser using SubtleCrypto
-    const seed = Array.from(crypto.getRandomValues(new Uint8Array(8)))
-      .map(b => b.toString(16).padStart(2, '0')).join('');
     const encoder = new TextEncoder();
     const data = encoder.encode(seed + 'queueshield');
     const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -37,18 +36,12 @@ export function JoinQueueButton({ eventId }: { eventId: string }) {
   }, []);
 
   // Step 2: Proof of Work — browser must find nonce with leading zeros
-  const solvePoW = useCallback(async (): Promise<{
-    challenge: string;
-    nonce: string;
-    difficulty: number;
-  }> => {
+  const solvePoW = useCallback(async (
+    challenge: string,
+    difficulty: number,
+  ): Promise<{ challenge: string; nonce: string; difficulty: number }> => {
     setPhase('pow');
     setPowProgress(0);
-
-    // Get challenge from server
-    const challengeRes = await fetch('/api/pow');
-    if (!challengeRes.ok) throw new Error('Failed to get PoW challenge');
-    const { challenge, difficulty } = await challengeRes.json();
 
     // Solve in worker-like loop (yields to UI every batch)
     const BATCH_SIZE = 5000;
@@ -118,11 +111,16 @@ export function JoinQueueButton({ eventId }: { eventId: string }) {
     setError(null);
 
     try {
-      // Layer 1: JS challenge
-      const jsChallenge = await solveJsChallenge();
+      // Fetch the challenge bundle (PoW challenge + single-use JS seed)
+      const challengeRes = await fetch('/api/pow');
+      if (!challengeRes.ok) throw new Error('Failed to get security challenge');
+      const { challenge, difficulty, jsSeed } = await challengeRes.json();
+
+      // Layer 1: JS challenge (server-issued seed)
+      const jsChallenge = await solveJsChallenge(jsSeed);
 
       // Layer 2: Proof of Work
-      const pow = await solvePoW();
+      const pow = await solvePoW(challenge, difficulty);
 
       // Layer 3: reCAPTCHA v3
       const recaptchaToken = await getRecaptchaToken();

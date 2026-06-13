@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getClientIp } from '@/lib/client-ip';
 
 const isDev = process.env.NODE_ENV !== 'production';
 
@@ -26,15 +27,6 @@ const SECURE_HEADERS: Record<string, string> = {
 const ipRequestCounts = new Map<string, { count: number; resetAt: number }>();
 const MIDDLEWARE_RATE_LIMIT = 100; // requests per window
 const MIDDLEWARE_WINDOW_MS = 60_000; // 1 minute
-
-function getClientIp(req: NextRequest): string {
-  return (
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    req.ip ||
-    '127.0.0.1'
-  );
-}
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -65,7 +57,7 @@ if (typeof globalThis !== 'undefined') {
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
-  const ip = getClientIp(req);
+  const ip = getClientIp(req.headers, req.ip);
 
   // Skip static assets and internal Next.js routes
   if (

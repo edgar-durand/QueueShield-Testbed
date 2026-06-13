@@ -102,6 +102,17 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // This wipes ALL data — require explicit confirmation to avoid accidents.
+  const confirmed =
+    req.nextUrl.searchParams.get('confirm') === 'true' ||
+    req.headers.get('x-confirm-purge') === 'yes';
+  if (!confirmed) {
+    return NextResponse.json(
+      { error: 'Destructive purge requires confirmation. Add ?confirm=true.' },
+      { status: 400 },
+    );
+  }
+
   // Purge all data from DB (children first, then sessions)
   const [botScores, captcha, telemetry, bans, sessions] = await prisma.$transaction([
     prisma.botScore.deleteMany(),

@@ -7,7 +7,10 @@ import { initializeServer } from '@/lib/init';
 import { verifyRecaptcha, recaptchaScoreToRisk } from '@/lib/recaptcha';
 import { verifySolution as verifyPoW } from '@/lib/pow';
 import { verifyJsChallenge } from '@/lib/crypto';
+import { consumeJsSeed } from '@/lib/js-challenge';
 import { analyzeIp } from '@/lib/ip-intelligence';
+import { getClientIp } from '@/lib/client-ip';
+import { env } from '@/lib/env';
 
 export async function POST(req: NextRequest) {
   // Start background queue processor on first join
@@ -16,9 +19,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { eventId, jsChallenge, pow, recaptchaToken } = body;
 
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-      || req.headers.get('x-real-ip')
-      || '127.0.0.1';
+    const ip = getClientIp(req.headers, req.ip);
+    const enforce = env.ENFORCE_CHALLENGES;
 
     // Rate limit
     const { QUEUE_JOIN } = RateLimiter.PROFILES;
@@ -41,13 +43,20 @@ export async function POST(req: NextRequest) {
 
     // --- Layer 0: JavaScript challenge verification ---
     if (jsChallenge?.seed && jsChallenge?.answer) {
-      const jsValid = verifyJsChallenge(jsChallenge.seed, jsChallenge.answer);
+      // The seed must have been issued by us and not yet used (replay/forgery).
+      const issued = await consumeJsSeed(jsChallenge.seed);
+      const jsValid = issued && verifyJsChallenge(jsChallenge.seed, jsChallenge.answer);
       if (!jsValid) {
         return NextResponse.json(
           { error: 'Browser verification failed.' },
           { status: 403 },
         );
       }
+    } else if (enforce) {
+      return NextResponse.json(
+        { error: 'Browser verification required.' },
+        { status: 403 },
+      );
     }
 
     // --- Layer 1: Proof-of-Work verification ---
@@ -59,6 +68,11 @@ export async function POST(req: NextRequest) {
           { status: 403 },
         );
       }
+    } else if (enforce) {
+      return NextResponse.json(
+        { error: 'Proof-of-work challenge required.' },
+        { status: 403 },
+      );
     }
 
     const ua = req.headers.get('user-agent') || '';
@@ -92,6 +106,12 @@ export async function POST(req: NextRequest) {
     }
 
     // --- Layer 4: reCAPTCHA v3 verification (invisible) ---
+    if (enforce && env.RECAPTCHA_SECRET_KEY && !recaptchaToken) {
+      return NextResponse.json(
+        { error: 'CAPTCHA verification required.' },
+        { status: 403 },
+      );
+    }
     if (recaptchaToken) {
       const recaptchaResult = await verifyRecaptcha(recaptchaToken, 'join_queue');
       const recaptchaRisk = recaptchaScoreToRisk(recaptchaResult.score);

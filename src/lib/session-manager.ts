@@ -2,6 +2,7 @@ import { prisma } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { headers } from 'next/headers';
 import type { SessionStatus, RiskLevel } from '@prisma/client';
+import { getClientIp } from './client-ip';
 
 export interface CreateSessionInput {
   ipAddress: string;
@@ -185,12 +186,7 @@ export class SessionManager {
   }
 
   static getClientIp(): string {
-    const hdrs = headers();
-    return (
-      hdrs.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      hdrs.get('x-real-ip') ||
-      '127.0.0.1'
-    );
+    return getClientIp(headers());
   }
 
   static getClientHeaders(): Record<string, string> {

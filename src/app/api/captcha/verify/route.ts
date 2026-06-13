@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { SessionManager } from '@/lib/session-manager';
+import { QueueManager } from '@/lib/queue-manager';
 import { RateLimiter } from '@/lib/rate-limiter';
 
 export async function POST(req: NextRequest) {
@@ -74,11 +75,9 @@ export async function POST(req: NextRequest) {
         responseTimeMs,
       });
 
-      // Return to queue
-      await prisma.session.update({
-        where: { id: sessionId },
-        data: { status: 'IN_QUEUE' },
-      });
+      // Re-insert into the Redis queue (not just the DB) so the session is
+      // actually waiting again — otherwise it would be stuck out of the queue.
+      await QueueManager.rejoinQueue(sessionId);
     }
 
     // Check if too many failed attempts -> ban

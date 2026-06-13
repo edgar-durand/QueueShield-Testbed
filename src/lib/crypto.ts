@@ -3,14 +3,13 @@
  */
 
 import { createHmac, createHash } from 'crypto';
-
-const TOKEN_SECRET = process.env.SESSION_SECRET || 'change-me-in-production-please';
+import { getSessionSecret } from './env';
 
 /**
  * Sign a queue token with HMAC-SHA256 to prevent forgery.
  */
 export function signToken(token: string): string {
-  return createHmac('sha256', TOKEN_SECRET).update(token).digest('hex').slice(0, 32);
+  return createHmac('sha256', getSessionSecret()).update(token).digest('hex').slice(0, 32);
 }
 
 /**
@@ -60,7 +59,7 @@ export function generateDeviceHash(data: {
  */
 export function generateJsChallenge(): { seed: string; expected: string } {
   const seed = createHash('sha256')
-    .update(`${Date.now()}:${Math.random()}:${TOKEN_SECRET}`)
+    .update(`${Date.now()}:${Math.random()}:${getSessionSecret()}`)
     .digest('hex')
     .slice(0, 16);
 

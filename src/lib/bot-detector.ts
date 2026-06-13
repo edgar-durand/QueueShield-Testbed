@@ -24,11 +24,6 @@ const KNOWN_BOT_UA_PATTERNS = [
   /spider/i,
 ];
 
-const DATACENTER_ASN_KEYWORDS = [
-  'amazon', 'aws', 'google cloud', 'microsoft azure', 'digitalocean',
-  'linode', 'vultr', 'hetzner', 'ovh', 'cloudflare',
-];
-
 export class BotDetector {
   /**
    * Level 1: Passive fingerprinting — analyze request headers on the server side.
@@ -111,48 +106,18 @@ export class BotDetector {
       { flags: headerAnalysis.flags },
     );
 
-    // IP analysis (basic — check for localhost/private ranges)
-    const ipScore = this.analyzeIp(ipAddress);
-    if (ipScore > 0) {
-      await SessionManager.addBotScore(
-        sessionId,
-        'passive',
-        'ip_analysis',
-        ipScore,
-        { ipAddress, reason: 'suspicious_ip_range' },
-      );
-    }
+    // Note: datacenter/proxy/VPN/Tor IP analysis is performed separately by
+    // `analyzeIp` in ip-intelligence.ts (called from the queue-join route).
 
-    const totalScore = Math.min(100, headerAnalysis.score + ipScore);
+    const totalScore = headerAnalysis.score;
 
     return {
       totalScore,
       details: {
         headers: headerAnalysis,
-        ip: { score: ipScore, address: ipAddress },
+        ip: { address: ipAddress },
       },
     };
-  }
-
-  /**
-   * Basic IP analysis — in production, integrate MaxMind/IPinfo.
-   */
-  static analyzeIp(ipAddress: string): number {
-    // Private/localhost — not suspicious for testing.
-    // 172.16.0.0/12 spans 172.16.x – 172.31.x (not all of 172.x).
-    const is172Private = /^172\.(1[6-9]|2\d|3[01])\./.test(ipAddress);
-    if (
-      ipAddress === '127.0.0.1' ||
-      ipAddress === '::1' ||
-      ipAddress.startsWith('192.168.') ||
-      ipAddress.startsWith('10.') ||
-      is172Private
-    ) {
-      return 0;
-    }
-
-    // In production, would check against datacenter IP ranges
-    return 0;
   }
 
   /**

@@ -17,7 +17,6 @@ const DATA_CLEANUP_MS = 60_000; // purge old data every 60s
 const PHANTOM_QUEUE_SIZE = 10_000;
 const TICKET_REFILL_AMOUNT = 100;
 const QUEUE_KEY = 'queueshield:queue';
-const QUEUE_POSITIONS_KEY = 'queueshield:positions';
 
 export class QueueProcessor {
   static start(): void {
@@ -178,29 +177,32 @@ export class QueueProcessor {
   }
 
   private static async cleanupExpiredTokens(): Promise<void> {
-    // Bulk expire admitted sessions whose token has expired
-    const result = await prisma.session.updateMany({
+    // Find exactly the sessions whose token just expired (not every historically
+    // expired session) so the Redis cleanup touches only the relevant IDs.
+    const toExpire = await prisma.session.findMany({
       where: {
         status: { in: ['ADMITTED', 'PURCHASING'] },
         accessTokenExpiresAt: { lt: new Date() },
       },
+      select: { id: true },
+      take: 500,
+    });
+    if (toExpire.length === 0) return;
+
+    const ids = toExpire.map((s: { id: string }) => s.id);
+
+    await prisma.session.updateMany({
+      where: { id: { in: ids } },
       data: { status: 'EXPIRED', accessToken: null },
     });
 
-    if (result.count > 0) {
-      // Also clean Redis admitted set for these
-      const expired = await prisma.session.findMany({
-        where: { status: 'EXPIRED', accessToken: null },
-        select: { id: true },
-        take: 500,
-      });
-      const pipe = redis.pipeline();
-      for (const s of expired) {
-        pipe.hdel('queueshield:admitted', s.id);
-      }
-      await pipe.exec();
-      console.log(`[QueueProcessor] Expired ${result.count} tokens`);
+    const pipe = redis.pipeline();
+    for (const id of ids) {
+      pipe.hdel('queueshield:admitted', id);
     }
+    await pipe.exec();
+
+    console.log(`[QueueProcessor] Expired ${ids.length} tokens`);
   }
 
   private static async garbageCollectSessions(): Promise<void> {
@@ -314,13 +316,13 @@ export class QueueProcessor {
     });
 
     // Delete old bot score entries
-    const scores = await prisma.botScoreEntry.deleteMany({
+    const scores = await prisma.botScore.deleteMany({
       where: { createdAt: { lt: cutoff } },
     });
 
     // Delete old captcha attempts
     const captcha = await prisma.captchaAttempt.deleteMany({
-      where: { attemptedAt: { lt: cutoff } },
+      where: { createdAt: { lt: cutoff } },
     });
 
     // Delete old sessions (EXPIRED, COMPLETED, BANNED)
