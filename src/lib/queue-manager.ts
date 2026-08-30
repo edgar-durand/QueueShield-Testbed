@@ -1,7 +1,7 @@
 import { redis } from './redis';
 import { prisma } from './db';
 import { v4 as uuidv4 } from 'uuid';
-import { signToken, verifyTokenSignature } from './crypto';
+import { signToken } from './crypto';
 
 const QUEUE_KEY = 'queueshield:queue';
 const QUEUE_POSITIONS_KEY = 'queueshield:positions';
@@ -106,13 +106,15 @@ export class QueueManager {
 
     for (const sessionId of sessionIds) {
       try {
-        // Check session is not banned
+        // Check session is not banned and is actually waiting in queue
         const session = await prisma.session.findUnique({
           where: { id: sessionId },
-          select: { isBanned: true, riskLevel: true },
+          select: { isBanned: true, riskLevel: true, status: true },
         });
 
-        if (!session || session.isBanned) {
+        // Drop banned, missing (phantom), or non-waiting (e.g. CHALLENGED/EXPIRED)
+        // sessions from the front so they don't block the line or get admitted.
+        if (!session || session.isBanned || session.status !== 'IN_QUEUE') {
           await redis.zrem(QUEUE_KEY, sessionId);
           await redis.hdel(QUEUE_POSITIONS_KEY, sessionId);
           continue;
@@ -122,14 +124,13 @@ export class QueueManager {
         const accessToken = uuidv4();
         const ttl = parseInt(process.env.ACCESS_TOKEN_TTL_SECONDS || '120', 10);
 
-        // Mark as admitted in Redis
+        // Mark as admitted in Redis.
+        // Note: expiry is enforced by QueueProcessor.cleanupExpiredTokens via the
+        // DB accessTokenExpiresAt field — individual hash fields can't carry a TTL.
         await redis.hset(QUEUE_ADMITTED_KEY, sessionId, JSON.stringify({
           accessToken,
           admittedAt: Date.now(),
         }));
-
-        // Set TTL on the admission
-        await redis.expire(`${QUEUE_ADMITTED_KEY}:${sessionId}`, ttl);
 
         // Remove from queue
         await redis.zrem(QUEUE_KEY, sessionId);
@@ -161,13 +162,32 @@ export class QueueManager {
    */
   static async refreshPositions(limit = 100): Promise<void> {
     const topMembers = await redis.zrange(QUEUE_KEY, 0, limit - 1);
-    const updates = topMembers.map((sessionId, i) =>
-      prisma.session.update({
-        where: { id: sessionId },
-        data: { queuePosition: i + 1 },
-      }).catch(() => { /* session may be deleted */ })
-    );
+    const updates = topMembers
+      // Phantom entries have no DB row — skip them to avoid failing updates.
+      .map((sessionId, i) => ({ sessionId, position: i + 1 }))
+      .filter(({ sessionId }) => !sessionId.startsWith('phantom-'))
+      .map(({ sessionId, position }) =>
+        prisma.session.update({
+          where: { id: sessionId },
+          data: { queuePosition: position },
+        }).catch(() => { /* session may be deleted */ })
+      );
     await Promise.all(updates);
+  }
+
+  /**
+   * Re-insert a session into the queue (e.g. after it passes a CAPTCHA
+   * challenge). It goes to the back of the queue with a fresh timestamp.
+   */
+  static async rejoinQueue(sessionId: string): Promise<number> {
+    const now = Date.now();
+    await redis.zadd(QUEUE_KEY, now, sessionId);
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { status: 'IN_QUEUE', queueJoinedAt: new Date(now) },
+    });
+    const rank = (await redis.zrank(QUEUE_KEY, sessionId)) ?? 0;
+    return rank + 1;
   }
 
   static async removeFromQueue(sessionId: string): Promise<void> {
@@ -201,26 +221,47 @@ export class QueueManager {
   }
 
   static async completePurchase(sessionId: string): Promise<boolean> {
-    try {
-      await prisma.session.update({
-        where: { id: sessionId },
-        data: { status: 'COMPLETED' },
-      });
+    // Atomically reserve a ticket and mark the session COMPLETED in one
+    // transaction. The inventory update uses a compare-and-swap on the value we
+    // just read, so two concurrent purchases can't both succeed past the last
+    // ticket (prevents overselling). Retried a few times on contention.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const sold = await prisma.$transaction(async (tx) => {
+          const event = await tx.eventConfig.findFirst({ where: { isActive: true } });
 
-      await redis.hdel(QUEUE_ADMITTED_KEY, sessionId);
+          if (event) {
+            if (event.soldTickets >= event.totalTickets) {
+              return false; // sold out
+            }
+            const reserved = await tx.eventConfig.updateMany({
+              where: { id: event.id, soldTickets: event.soldTickets },
+              data: { soldTickets: { increment: 1 } },
+            });
+            if (reserved.count === 0) {
+              // Lost the race; surface as contention to trigger a retry.
+              throw new Error('ticket_contention');
+            }
+          }
 
-      // Increment sold tickets
-      const event = await prisma.eventConfig.findFirst({ where: { isActive: true } });
-      if (event) {
-        await prisma.eventConfig.update({
-          where: { id: event.id },
-          data: { soldTickets: { increment: 1 } },
+          await tx.session.update({
+            where: { id: sessionId },
+            data: { status: 'COMPLETED' },
+          });
+          return true;
         });
-      }
 
-      return true;
-    } catch {
-      return false;
+        if (sold) {
+          await redis.hdel(QUEUE_ADMITTED_KEY, sessionId);
+        }
+        return sold;
+      } catch (err) {
+        if (err instanceof Error && err.message === 'ticket_contention') {
+          continue; // retry
+        }
+        return false;
+      }
     }
+    return false;
   }
 }

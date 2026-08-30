@@ -1,4 +1,5 @@
 import { SessionManager } from './session-manager';
+import { prisma } from './db';
 
 interface HeaderAnalysis {
   score: number;
@@ -21,11 +22,6 @@ const KNOWN_BOT_UA_PATTERNS = [
   /crawl/i,
   /bot\b/i,
   /spider/i,
-];
-
-const DATACENTER_ASN_KEYWORDS = [
-  'amazon', 'aws', 'google cloud', 'microsoft azure', 'digitalocean',
-  'linode', 'vultr', 'hetzner', 'ovh', 'cloudflare',
 ];
 
 export class BotDetector {
@@ -110,46 +106,18 @@ export class BotDetector {
       { flags: headerAnalysis.flags },
     );
 
-    // IP analysis (basic — check for localhost/private ranges)
-    const ipScore = this.analyzeIp(ipAddress);
-    if (ipScore > 0) {
-      await SessionManager.addBotScore(
-        sessionId,
-        'passive',
-        'ip_analysis',
-        ipScore,
-        { ipAddress, reason: 'suspicious_ip_range' },
-      );
-    }
+    // Note: datacenter/proxy/VPN/Tor IP analysis is performed separately by
+    // `analyzeIp` in ip-intelligence.ts (called from the queue-join route).
 
-    const totalScore = Math.min(100, headerAnalysis.score + ipScore);
+    const totalScore = headerAnalysis.score;
 
     return {
       totalScore,
       details: {
         headers: headerAnalysis,
-        ip: { score: ipScore, address: ipAddress },
+        ip: { address: ipAddress },
       },
     };
-  }
-
-  /**
-   * Basic IP analysis — in production, integrate MaxMind/IPinfo.
-   */
-  static analyzeIp(ipAddress: string): number {
-    // Private/localhost — not suspicious for testing
-    if (
-      ipAddress === '127.0.0.1' ||
-      ipAddress === '::1' ||
-      ipAddress.startsWith('192.168.') ||
-      ipAddress.startsWith('10.') ||
-      ipAddress.startsWith('172.')
-    ) {
-      return 0;
-    }
-
-    // In production, would check against datacenter IP ranges
-    return 0;
   }
 
   /**
@@ -224,12 +192,10 @@ export class BotDetector {
     });
 
     // Store fingerprint data
-    await import('./db').then(({ prisma }) =>
-      prisma.session.update({
-        where: { id: sessionId },
-        data: { activeFingerprint: data as any },
-      }),
-    );
+    await prisma.session.update({
+      where: { id: sessionId },
+      data: { activeFingerprint: data as any },
+    });
 
     return score;
   }
